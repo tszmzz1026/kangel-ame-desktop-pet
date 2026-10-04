@@ -1,0 +1,27 @@
+.venv/
+.buildenv/
+build/
+dist/
+release/
+*.spec
+*.zip
+tts_models/
+tts_backend/
+extracted/
+voice/train_raw/
+tools/*.png
+tools/probe_*.txt
+data/
+.env*
+!.env.example
+__pycache__/
+*.py[cod]
+
+# 本地配置、记忆、日志和截图可能包含密钥或隐私内容
+data/config.json
+data/memory.json
+data/pet.log*
+data/screenshots/
+
+# 测试生成物
+tools/out/
