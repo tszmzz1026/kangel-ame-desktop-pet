@@ -1,11 +1,12 @@
 """使用已有 GitHub 登录发布源码与双版本附件，凭据只保留在内存。"""
 
 import argparse
+import hashlib
 import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import requests
 
@@ -13,6 +14,30 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO_NAME = "kangel-ame-desktop-pet"
 EXPECTED_OWNER = "tszmzz1026"
 TAG = "v1.0.0"
+
+
+class UploadReader:
+    mode = "rb"
+
+    def __init__(self, stream: BinaryIO, name: str, total: int) -> None:
+        self._stream = stream
+        self._name = name
+        self._total = total
+        self._last_step = -1
+
+    def fileno(self) -> int:
+        return self._stream.fileno()
+
+    def tell(self) -> int:
+        return self._stream.tell()
+
+    def read(self, size: int = -1) -> bytes:
+        data = self._stream.read(size)
+        step = self.tell() * 10 // max(1, self._total)
+        if step > self._last_step:
+            self._last_step = step
+            print(f"{self._name}: {min(100, step * 10)}% 已发送", flush=True)
+        return data
 
 
 def get_token() -> str:
@@ -33,6 +58,14 @@ def get_token() -> str:
     if not token:
         raise RuntimeError("GitHub 尚未登录，请先使用 Git Credential Manager 登录")
     return token
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def api(session: requests.Session, method: str, path: str, **kwargs: Any) -> requests.Response:
@@ -143,12 +176,24 @@ def main() -> None:
                 response = session.post(
                     upload_url,
                     params={"name": source.name},
-                    data=stream,
+                    data=UploadReader(stream, source.name, source.stat().st_size),
                     headers={"Content-Type": "application/zip" if source.suffix == ".zip" else "text/plain"},
                     timeout=(30, 1800),
                 )
             if response.status_code != 201:
                 raise RuntimeError(f"上传附件失败: {source.name}, HTTP {response.status_code}")
+        uploaded = api(session, "GET", f"{repo_path}/releases/{release['id']}").json()
+        assets = {asset["name"]: asset for asset in uploaded["assets"]}
+        for source in (ROOT / "release").iterdir():
+            if source.suffix not in (".zip", ".txt"):
+                continue
+            asset = assets.get(source.name)
+            if asset is None or asset["size"] != source.stat().st_size:
+                raise RuntimeError(f"远端附件不完整: {source.name}")
+            if asset.get("digest"):
+                digest = f"sha256:{file_sha256(source)}"
+                if asset["digest"] != digest:
+                    raise RuntimeError(f"远端校验值不一致: {source.name}")
         api(session, "PATCH", f"{repo_path}/releases/{release['id']}", json={"draft": False})
         final = api(session, "GET", f"{repo_path}/releases/{release['id']}").json()
         print(f"发布完成: {final['html_url']}", flush=True)

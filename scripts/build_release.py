@@ -25,6 +25,14 @@ MODEL_FILES = (
 )
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def exclude_incompatible_icu(output: Path) -> None:
     library = output / "_internal" / "icuuc.dll"
     if not library.is_file():
@@ -134,8 +142,7 @@ def main() -> None:
         build_variant(variant, args.model_root, args.repack_only)
     hashes: list[str] = []
     for source in sorted(RELEASE_DIR.glob("*.zip")):
-        with source.open("rb") as stream:
-            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        digest = file_sha256(source)
         hashes.append(f"{digest}  {source.name}")
     (RELEASE_DIR / "SHA256SUMS.txt").write_text("\n".join(hashes) + "\n", encoding="utf-8")
 
